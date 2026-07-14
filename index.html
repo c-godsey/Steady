@@ -277,6 +277,12 @@
       border-radius: 999px; padding: .3rem .7rem; font-size: .8rem; cursor: pointer; }
     .chip:hover { background: var(--chip); }
 
+    /* Recent / frequent foods */
+    .recent-foods { margin-top: .8rem; }
+    .recent-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .45rem; }
+    .recent-head .rl { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+    .recent-toggle { background: transparent; border: none; color: var(--accent); font-size: .78rem; font-weight: 500; cursor: pointer; padding: 0; }
+
     /* Recipe importer modal */
     .modal-backdrop { position: fixed; inset: 0; background: rgba(47,55,51,.45); z-index: 100;
       display: flex; align-items: flex-end; justify-content: center; }
@@ -461,6 +467,7 @@
           <div class="qb" id="qa-scan"><svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10 8v8M13 8v8M16 8v8"/></svg>Scan</div>
           <div class="qb" id="qa-recipe"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Recipe</div>
         </div>
+        <div id="recent-foods" class="recent-foods"></div>
         <div id="food-input" style="display:none; margin-top:.9rem;">
           <div class="caption">Describe what you ate — plain words work.</div>
           <div class="row">
@@ -672,6 +679,50 @@
     const day = getDay(iso);
     const foods = (day.foods || []).concat([food]);
     saveDay(iso, { foods, calories: foods.reduce((s, f) => s + (f.kcal || 0), 0) });
+    recordFood(food);
+  }
+
+  // ---- Recent / frequent foods ---------------------------------------
+  const RECENTS_KEY = "steady_food_recents";
+  let recentMode = "recent"; // "recent" | "frequent"
+  function loadRecents() { try { return JSON.parse(localStorage.getItem(RECENTS_KEY)) || {}; } catch { return {}; } }
+  function saveRecents(o) { try { localStorage.setItem(RECENTS_KEY, JSON.stringify(o)); } catch {} }
+  function recordFood(food) {
+    if (!food || !food.name) return;
+    const key = food.name.toLowerCase().trim();
+    const o = loadRecents(), prev = o[key] || {};
+    o[key] = { name: food.name, kcal: food.kcal || 0, grams: food.grams != null ? food.grams : null,
+      per100: food.per100 != null ? food.per100 : null, count: (prev.count || 0) + 1, last: Date.now() };
+    // Cap growth: keep the 60 most recently used.
+    const keys = Object.keys(o);
+    if (keys.length > 60) {
+      keys.sort((a, b) => (o[a].last || 0) - (o[b].last || 0));
+      for (let i = 0; i < keys.length - 60; i++) delete o[keys[i]];
+    }
+    saveRecents(o);
+  }
+  function getRecents(mode) {
+    const arr = Object.values(loadRecents());
+    arr.sort((a, b) => mode === "frequent" ? (b.count - a.count) || (b.last - a.last) : (b.last - a.last));
+    return arr.slice(0, 12);
+  }
+  function renderRecents() {
+    const box = $("recent-foods"); if (!box) return;
+    const list = getRecents(recentMode);
+    if (!list.length) { box.innerHTML = ""; return; }
+    box.innerHTML = `
+      <div class="recent-head">
+        <span class="rl">${recentMode === "frequent" ? "Frequent" : "Recent"} foods</span>
+        <button class="recent-toggle" id="recent-switch">${recentMode === "frequent" ? "Show recent" : "Show frequent"}</button>
+      </div>
+      <div class="chips">${list.map((r, i) => `<span class="chip" data-i="${i}">${escapeHtml(r.name)} · ${r.kcal} cal</span>`).join("")}</div>`;
+    $("recent-switch").onclick = () => { recentMode = recentMode === "frequent" ? "recent" : "frequent"; renderRecents(); };
+    box.querySelectorAll(".chip").forEach(c => c.onclick = () => {
+      const r = list[parseInt(c.dataset.i, 10)];
+      addFood(isoToday(), { name: r.name, kcal: r.kcal, grams: r.grams, per100: r.per100 });
+      renderNutrition();
+      toast("Added — " + r.kcal + " cal.");
+    });
   }
   function removeFood(iso, index) {
     const day = getDay(iso);
@@ -690,10 +741,14 @@
 
   // ---- Streaks -------------------------------------------------------
   function currentStreak(field) {
-    // Count consecutive days ending today where `field` is true.
+    // Consecutive days with `field` true, ending today. An unlogged *today*
+    // doesn't break the streak — we just start counting from yesterday, so a
+    // run stays alive until you actually miss a day.
     const all = loadAll();
     let streak = 0;
     let d = new Date(isoToday() + "T00:00:00");
+    const todayIso = d.toISOString().slice(0, 10);
+    if (!(all[todayIso] && all[todayIso][field])) d.setDate(d.getDate() - 1);
     while (true) {
       const iso = d.toISOString().slice(0, 10);
       if (all[iso] && all[iso][field]) { streak++; d.setDate(d.getDate() - 1); }
@@ -744,6 +799,8 @@
   function movementStreak() {
     const set = movementDates();
     let streak = 0, d = new Date(isoToday() + "T00:00:00");
+    // An unlogged today doesn't break the run — start from yesterday if needed.
+    if (!set.has(d.toISOString().slice(0, 10))) d.setDate(d.getDate() - 1);
     while (set.has(d.toISOString().slice(0, 10))) { streak++; d.setDate(d.getDate() - 1); }
     return streak;
   }
@@ -1101,6 +1158,7 @@
     fill.style.width = pct + "%";
     fill.classList.toggle("over", food > goal);
     renderGlance();
+    renderRecents();
 
     // Intake log rows
     const foods = getDay(iso).foods || [];
