@@ -701,9 +701,22 @@
     }
     saveRecents(o);
   }
+  // Build the recent/frequent list from every food ever logged (so it works
+  // for foods added before this feature existed), newest day taking priority.
   function getRecents(mode) {
-    const arr = Object.values(loadRecents());
-    arr.sort((a, b) => mode === "frequent" ? (b.count - a.count) || (b.last - a.last) : (b.last - a.last));
+    const all = loadAll(), map = {};
+    Object.keys(all).sort().forEach(iso => {
+      (all[iso].foods || []).forEach(f => {
+        if (!f || !f.name) return;
+        const key = f.name.toLowerCase().trim(), prev = map[key];
+        map[key] = { name: f.name, kcal: f.kcal || 0, grams: f.grams != null ? f.grams : null,
+          per100: f.per100 != null ? f.per100 : null, count: (prev ? prev.count : 0) + 1, last: iso };
+      });
+    });
+    const arr = Object.values(map);
+    arr.sort((a, b) => mode === "frequent"
+      ? (b.count - a.count) || (a.last < b.last ? 1 : -1)
+      : (a.last < b.last ? 1 : -1));
     return arr.slice(0, 12);
   }
   function renderRecents() {
