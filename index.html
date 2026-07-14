@@ -236,6 +236,10 @@
     .log-row:first-child { border-top: none; }
     .log-row .lname { flex: 1; }
     .log-row .lkcal { color: var(--muted); font-size: .82rem; }
+    .log-row .ledit { background: transparent; color: var(--muted); border: none; font-size: .95rem; line-height: 1; padding: .1rem .45rem; cursor: pointer; }
+    .log-row .ledit:hover { color: var(--accent); }
+    .log-edit { display: flex; gap: .6rem; align-items: flex-end; padding: .2rem 0 .8rem; border-bottom: 1px solid var(--border); }
+    .log-edit label.field { margin: 0 0 .25rem; }
     .log-row .lremove { background: transparent; color: var(--amber); border: none; font-size: 1.2rem; line-height: 1; padding: .1rem .45rem; cursor: pointer; }
     .log-row .lremove:hover { color: #8f4f38; }
     .log-empty { color: var(--muted); font-size: .88rem; padding: .3rem 0; }
@@ -378,8 +382,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="M9 9v6M15 9v6"/></svg>
       </div>
 
+      <h2>Today's meditation</h2>
       <div class="card">
-        <div class="affirmation" id="affirmation"></div>
+        <div class="affirmation" id="home-med"></div>
+        <button class="block" id="home-breathe" style="margin-top:.9rem;">Breathe</button>
       </div>
 
       <h2>Your steady streaks</h2>
@@ -396,16 +402,11 @@
         </div>
       </div>
 
-      <h2>This week</h2>
-      <div class="card" id="week-review"></div>
-
-      <div class="card" id="bodyweight-card" style="display:none;"></div>
+      <h2>Today</h2>
+      <div class="card" id="home-cal" role="button" tabindex="0"></div>
 
       <h2>Milestones</h2>
       <div class="card" id="milestones-card"></div>
-
-      <h2>Recent reflections</h2>
-      <div id="recent-entries"></div>
     </section>
 
     <!-- ============================ TODAY'S LOG ============================ -->
@@ -646,6 +647,14 @@
     foods.splice(index, 1);
     saveDay(iso, { foods, calories: foods.reduce((s, f) => s + (f.kcal || 0), 0) });
   }
+  // Update a logged item in place (amount and/or calories).
+  function editFood(iso, index, patch) {
+    const day = getDay(iso);
+    const foods = (day.foods || []).slice();
+    if (!foods[index]) return;
+    foods[index] = Object.assign({}, foods[index], patch);
+    saveDay(iso, { foods, calories: foods.reduce((s, f) => s + (f.kcal || 0), 0) });
+  }
 
   // ---- Streaks -------------------------------------------------------
   function currentStreak(field) {
@@ -723,36 +732,51 @@
 
   // ---- Dashboard render ----------------------------------------------
   function renderDashboard() {
-    $("affirmation").textContent =
-      AFFIRMATIONS[Math.floor(Math.random() * AFFIRMATIONS.length)];
+    const m = MEDITATIONS[ordinal(isoToday()) % MEDITATIONS.length];
+    $("home-med").textContent = m.meditation;
     $("streak-alcohol").textContent = currentStreak("alcohol_free");
     $("streak-workout").textContent = movementStreak();
     weekDots("alcohol_free", "dots-alcohol");
     weekDots("workout", "dots-workout");
-    renderNudge();
-    renderWeekReview();
-    renderBodyWeight();
+    renderHomeCal();
     renderMilestones();
-
-    const all = loadAll();
-    const entries = Object.keys(all)
-      .filter(iso => (all[iso].journal || "").trim() !== "")
-      .sort().reverse().slice(0, 5);
-
-    const box = $("recent-entries");
-    if (entries.length === 0) {
-      box.innerHTML = '<div class="card empty">No entries yet. Your first reflection is waiting in the Journal.</div>';
-      return;
-    }
-    box.innerHTML = entries.map(iso => {
-      let text = all[iso].journal.trim();
-      if (text.length > 240) text = text.slice(0, 240).trimEnd() + "…";
-      return `<div class="card">
-        <div class="entry-date">${iso}</div>
-        <div class="entry-text">${escapeHtml(text)}</div>
-      </div>`;
-    }).join("");
+    renderNudge();
   }
+
+  // Compact "today's calories" card on Home; tap to open the Today tab.
+  function renderHomeCal() {
+    const box = $("home-cal"); if (!box) return;
+    const goal = getSettings().calorieGoal, food = dayCalories(isoToday()), remaining = goal - food;
+    const pct = goal > 0 ? Math.min(100, Math.round(food / goal * 100)) : 0;
+    box.innerHTML = `
+      <div style="display:flex; align-items:baseline; justify-content:space-between; gap:.6rem;">
+        <div><span class="wk-num" style="font-size:1.9rem;">${remaining >= 0 ? remaining.toLocaleString() : "+" + (-remaining).toLocaleString()}</span>
+          <span class="mv-sub">${remaining >= 0 ? "cal left" : "cal over"} · goal ${goal.toLocaleString()}</span></div>
+        <span class="mv-sub">${food.toLocaleString()} eaten</span>
+      </div>
+      <div class="cal-bar" style="margin-top:.6rem;"><div class="cal-bar-fill${food > goal ? " over" : ""}" style="width:${pct}%"></div></div>`;
+  }
+
+  // A quiet breathing screen (meditation + breath) reachable from Home.
+  function openBreathe() {
+    const el = document.createElement("div");
+    el.className = "pause-overlay"; el.id = "breathe-overlay";
+    el.innerHTML = `
+      <div class="pause-inner">
+        <div class="pause-top"><span class="t">Breathe</span><button class="pause-x" id="breathe-x" aria-label="Close">×</button></div>
+        <div class="breathe-wrap">
+          <div class="breathe">breathe</div>
+          <div class="breathe-cap">In through the nose for 4… hold… out through the mouth for 6. Let your shoulders drop, and stay as long as you like.</div>
+        </div>
+        <div class="card"><div class="reframe">${escapeHtml(MEDITATIONS[ordinal(isoToday()) % MEDITATIONS.length].meditation)}</div></div>
+        <button class="block" id="breathe-done" style="margin-top:.4rem;">Done</button>
+      </div>`;
+    document.body.appendChild(el); document.body.style.overflow = "hidden";
+    const close = () => { el.remove(); document.body.style.overflow = ""; };
+    $("breathe-x").onclick = close; $("breathe-done").onclick = close;
+  }
+  { const hb = $("home-breathe"); if (hb) hb.addEventListener("click", openBreathe); }
+  { const hc = $("home-cal"); if (hc) { hc.addEventListener("click", () => showView("today")); hc.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showView("today"); } }); } }
 
   // ---- Today's log: load + wire --------------------------------------
   function renderToday() {
@@ -852,7 +876,7 @@
     const tiles = [
       [`${af}/7`, "Alcohol-free"],
       [`${moved}/7`, "Days moved"],
-      [avg ? avg.toLocaleString() : "—", goal ? `Avg kcal / ${goal.toLocaleString()}` : "Avg kcal"],
+      [avg ? avg.toLocaleString() : "—", goal ? `Avg cal / ${goal.toLocaleString()}` : "Avg cal"],
       [med.toLocaleString(), "Min stillness"],
       [String(refl), "Reflections"]
     ];
@@ -1055,13 +1079,30 @@
     }
     box.innerHTML = foods.map((f, i) => {
       const amt = f.grams ? `${f.grams} g · ` : "";
+      const canGrams = f.per100 != null && f.grams != null;
       return `<div class="log-row">
-        <div class="lname">${escapeHtml(f.name)}<div class="lkcal">${amt}${f.kcal} kcal</div></div>
-        <button class="lremove" data-i="${i}" aria-label="Remove ${escapeHtml(f.name)}">×</button>
-      </div>`;
+          <div class="lname">${escapeHtml(f.name)}<div class="lkcal">${amt}${f.kcal} cal</div></div>
+          <button class="ledit" data-i="${i}" aria-label="Edit ${escapeHtml(f.name)}">✎</button>
+          <button class="lremove" data-i="${i}" aria-label="Remove ${escapeHtml(f.name)}">×</button>
+        </div>
+        <div class="log-edit" id="ledit-${i}" style="display:none;">
+          ${canGrams ? `<div style="flex:1;"><label class="field">Amount (g)</label><input type="number" id="edg-${i}" min="1" step="5" value="${f.grams}" /></div>` : ""}
+          <div style="flex:1;"><label class="field">Calories</label><input type="number" id="edc-${i}" min="0" step="5" value="${f.kcal}" /></div>
+          <button id="eds-${i}" style="flex:0 0 auto;">Save</button>
+        </div>`;
     }).join("");
-    box.querySelectorAll(".lremove").forEach(btn => {
-      btn.addEventListener("click", () => { removeFood(iso, parseInt(btn.dataset.i, 10)); renderNutrition(); });
+    box.querySelectorAll(".lremove").forEach(btn => btn.addEventListener("click", () => { removeFood(iso, parseInt(btn.dataset.i, 10)); renderNutrition(); }));
+    box.querySelectorAll(".ledit").forEach(btn => btn.addEventListener("click", () => {
+      const p = $("ledit-" + btn.dataset.i); if (p) p.style.display = p.style.display === "none" ? "flex" : "none";
+    }));
+    foods.forEach((f, i) => {
+      const g = $("edg-" + i), c = $("edc-" + i), s = $("eds-" + i);
+      if (g && c && f.per100 != null) g.addEventListener("input", () => { c.value = Math.round(f.per100 * (parseFloat(g.value) || 0) / 100); });
+      if (s) s.addEventListener("click", () => {
+        const patch = { kcal: parseInt(c.value, 10) || 0 };
+        if (g) patch.grams = parseInt(g.value, 10) || null;
+        editFood(iso, i, patch); renderNutrition(); toast("Updated.");
+      });
     });
   }
 
@@ -1186,7 +1227,55 @@
     ["raisins",299,{tbsp:9,cup:145,handful:30},1,"handful"],
     ["soup",56,{cup:245,can:305},1,"cup"],
     ["cottage cheese",98,{cup:210},0.5,"cup"],
-    ["mozzarella",280,{slice:28},1,"oz"]
+    ["mozzarella",280,{slice:28},1,"oz"],
+    ["peach",39,{medium:150},1,"medium"],
+    ["pear",57,{medium:178},1,"medium"],
+    ["plum",46,{each:66},1,"each"],
+    ["mango",60,{cup:165,medium:200},1,"medium"],
+    ["pineapple",50,{cup:165},1,"cup"],
+    ["watermelon",30,{cup:152},1,"cup"],
+    ["cantaloupe|melon",34,{cup:160},1,"cup"],
+    ["grapefruit",42,{medium:123},1,"medium"],
+    ["cherries|cherry",63,{cup:154},1,"cup"],
+    ["raspberries|raspberry",52,{cup:123},1,"cup"],
+    ["blackberries|blackberry",43,{cup:144},1,"cup"],
+    ["kiwi",61,{each:69},1,"each"],
+    ["lemon",29,{each:58},1,"each"],
+    ["lime",30,{each:67},1,"each"],
+    ["pomegranate",83,{cup:174},1,"cup"],
+    ["apricot",48,{each:35},1,"each"],
+    ["pineapple juice|juice|apple juice",46,{cup:248},1,"cup"],
+    ["bell pepper|pepper|capsicum",31,{medium:119},1,"medium"],
+    ["onion",40,{medium:110},1,"medium"],
+    ["mushroom",22,{cup:70},1,"cup"],
+    ["zucchini|courgette",17,{cup:124},1,"cup"],
+    ["green beans",31,{cup:100},1,"cup"],
+    ["peas",81,{cup:145},1,"cup"],
+    ["asparagus",20,{cup:134},1,"cup"],
+    ["cauliflower",25,{cup:107},1,"cup"],
+    ["kale",35,{cup:67},1,"cup"],
+    ["celery",16,{cup:101},1,"cup"],
+    ["cabbage",25,{cup:89},1,"cup"],
+    ["eggplant|aubergine",25,{cup:82},1,"cup"],
+    ["tofu",76,{cup:248},0.5,"cup"],
+    ["chickpeas|garbanzo",164,{cup:164},1,"cup"],
+    ["edamame",121,{cup:155},1,"cup"],
+    ["ham",145,{slice:28},2,"slice"],
+    ["sausage",301,{each:75},1,"each"],
+    ["meatball|meatballs",197,{each:30},3,"each"],
+    ["tortilla|wrap",218,{each:45},1,"each"],
+    ["pita",275,{each:60},1,"each"],
+    ["couscous",112,{cup:157},1,"cup"],
+    ["mashed potato|mashed potatoes",88,{cup:210},1,"cup"],
+    ["potato chips|chips|crisps",536,{oz:28.35,handful:30},1,"handful"],
+    ["popcorn",387,{cup:8},3,"cup"],
+    ["pretzels",380,{oz:28.35,handful:30},1,"handful"],
+    ["cracker|crackers",502,{each:3},5,"each"],
+    ["granola bar|protein bar",450,{bar:40},1,"bar"],
+    ["tea|green tea|black tea",1,{cup:237},1,"cup"],
+    ["latte|cappuccino",55,{cup:240},1,"cup"],
+    ["smoothie",60,{cup:240},1,"cup"],
+    ["energy drink",45,{can:250},1,"can"]
   ];
   const FOODS = RAW_FOODS.map(f => ({ names:f[0].split("|"), kcal100:f[1], units:f[2], defQty:f[3], defUnit:f[4] }));
 
@@ -1215,17 +1304,26 @@
     if (food && food.units && food.units[u] != null) return food.units[u];
     return GEN[u] != null ? GEN[u] : 100;
   }
+  // Reduce a word to a rough singular so "apples"/"peaches"/"berries" match.
+  function singWord(w) {
+    if (w.length <= 3) return w;
+    if (/ies$/.test(w)) return w.slice(0, -3) + "y";        // berries -> berry
+    if (/(ch|sh|x|z|s|o)es$/.test(w)) return w.slice(0, -2); // peaches -> peach, tomatoes -> tomato
+    if (/ss$/.test(w)) return w;                            // glass stays
+    if (/s$/.test(w)) return w.slice(0, -1);               // apples -> apple
+    return w;
+  }
+  function singularize(str) { return str.split(" ").map(singWord).join(" "); }
   function findFood(text) {
-    let clean = " " + text.toLowerCase()
-      .replace(/\b(of|cooked|raw|fresh|boiled|grilled|baked|fried|roasted|steamed|plain|organic|the)\b/g," ")
-      .replace(/[^a-z\s]/g," ").replace(/\s+/g," ").trim() + " ";
+    const cleanRaw = text.toLowerCase()
+      .replace(/\b(of|cooked|raw|fresh|boiled|grilled|baked|fried|roasted|steamed|plain|organic|the|a|an|some)\b/g, " ")
+      .replace(/[^a-z\s]/g, " ").replace(/\s+/g, " ").trim();
+    const clean = " " + singularize(cleanRaw) + " ";
     let best = null, bestLen = 0;
     for (const f of FOODS) {
       for (const n of f.names) {
-        const singular = n.replace(/s$/,"");
-        if ((clean.includes(" "+n+" ") || clean.includes(" "+singular+" ")) && n.length > bestLen) {
-          best = f; bestLen = n.length;
-        }
+        const ns = singularize(n);
+        if (clean.includes(" " + ns + " ") && ns.length > bestLen) { best = f; bestLen = ns.length; }
       }
     }
     return best;
@@ -1290,16 +1388,23 @@
     const cache = foodCache();
     if (query in cache) return cache[query];
     const url = "https://world.openfoodfacts.org/cgi/search.pl?search_terms=" + encodeURIComponent(query)
-      + "&search_simple=1&action=process&json=1&page_size=5&fields=product_name,nutriments";
+      + "&search_simple=1&action=process&json=1&page_size=12&fields=product_name,categories_tags,nutriments";
     let kcal100 = null;
     try {
       const resp = await fetch(url);
       if (resp.ok) {
         const data = await resp.json();
-        for (const p of (data.products || [])) {
-          const k = parseFloat((p.nutriments || {})["energy-kcal_100g"]);
-          if (k > 0) { kcal100 = Math.round(k); break; }
-        }
+        const products = (data.products || []).map(p => ({
+          name: (p.product_name || "").toLowerCase(),
+          cats: (p.categories_tags || []).join(" "),
+          k: parseFloat((p.nutriments || {})["energy-kcal_100g"])
+        })).filter(p => p.k > 0);
+        // Prefer a product whose name contains the query word and isn't an
+        // obvious drink (which skews very low-calorie for whole foods).
+        const isDrink = p => /beverage|drink|water|soda|juice|tea|infusion/.test(p.cats + " " + p.name);
+        const named = products.filter(p => p.name.includes(query));
+        const pick = named.find(p => !isDrink(p)) || named[0] || products.find(p => !isDrink(p)) || products[0];
+        if (pick) kcal100 = Math.round(pick.k);
       }
     } catch { /* offline — leave null */ }
     cache[query] = kcal100;
@@ -1323,24 +1428,47 @@
   const EXAMPLES = ["2 cups rice","1 lb chicken","3 eggs","½ cup oats","2 tbsp peanut butter","1 banana","6 oz salmon","300 cal snack"];
 
   // ---- Smart food entry wiring --------------------------------------
+  // Split a line into separate foods: "1 cup rice, 2 chicken breast and 1 egg".
+  function splitFoods(s) {
+    return s.split(/\s*(?:,|;|\n|\+|&|\band\b)\s*/i).map(x => x.trim()).filter(Boolean);
+  }
   function updateParsePreview() {
     const v = $("food-desc").value; const box = $("parse-preview");
     if (!v.trim()) { box.innerHTML = ""; return; }
-    const est = estimate(v);
-    if (est && est.ok) box.innerHTML = `<span class="ok">≈ ${est.kcal} kcal${est.grams ? ` · ${est.grams} g` : ""}</span>`;
-    else box.innerHTML = `<span class="no">I'll look this up when you add it — or type calories like “300 cal”.</span>`;
+    const parts = splitFoods(v);
+    let total = 0, ok = 0, unknown = 0;
+    parts.forEach(p => { const e = estimate(p); if (e && e.ok) { total += e.kcal; ok++; } else unknown++; });
+    if (parts.length > 1) {
+      box.innerHTML = `<span class="ok">≈ ${total.toLocaleString()} cal · ${ok} item${ok === 1 ? "" : "s"}${unknown ? ` · ${unknown} to look up` : ""}</span>`;
+    } else if (ok) {
+      const e = estimate(parts[0]);
+      box.innerHTML = `<span class="ok">≈ ${e.kcal} cal${e.grams ? ` · ${e.grams} g` : ""}</span>`;
+    } else {
+      box.innerHTML = `<span class="no">I'll look this up when you add it — or type calories like “300 cal”.</span>`;
+    }
   }
   async function addFromDesc() {
-    const v = $("food-desc").value.trim();
-    if (!v) return;
+    const raw = $("food-desc").value.trim();
+    if (!raw) return;
+    const parts = splitFoods(raw);
     $("parse-preview").innerHTML = '<span class="no">Estimating…</span>';
-    const est = await estimateAsync(v);
-    if (est && est.ok) {
-      addFood(isoToday(), { name: est.name, kcal: est.kcal, grams: est.grams });
-      $("food-desc").value = ""; $("parse-preview").innerHTML = ""; renderNutrition();
-      toast("Added — " + est.kcal + " kcal.");
+    let added = 0, total = 0; const failed = [];
+    for (const p of parts) {
+      const est = await estimateAsync(p);
+      if (est && est.ok) {
+        addFood(isoToday(), { name: est.name, kcal: est.kcal, grams: est.grams, per100: est.grams ? Math.round(est.kcal / est.grams * 100) : null });
+        added++; total += est.kcal;
+      } else { failed.push(p); }
+    }
+    renderNutrition();
+    if (added && !failed.length) {
+      $("food-desc").value = ""; $("parse-preview").innerHTML = "";
+      toast(`Added ${added} food${added === 1 ? "" : "s"} — ${total.toLocaleString()} cal.`);
+    } else if (added) {
+      $("food-desc").value = failed.join(", ");
+      $("parse-preview").innerHTML = `<span class="no">Added ${added}. Couldn't read: ${escapeHtml(failed.join(", "))}.</span>`;
     } else {
-      $("parse-preview").innerHTML = '<span class="no">Couldn\'t find that food. Try an amount, or type calories like “300 cal”.</span>';
+      $("parse-preview").innerHTML = `<span class="no">Couldn't read that. Try “1 cup rice, 2 eggs”, or type calories like “300 cal”.</span>`;
     }
   }
   $("food-desc").addEventListener("input", updateParsePreview);
@@ -1692,14 +1820,14 @@
             <input type="number" id="rc-total" min="0" step="10" value="${r.totalCalories}" /></div>
         </div>
         <div class="caption">Adjust servings or total and the per-serving figure updates.</div>
-        <button class="block" id="rc-log" style="margin-top:.7rem;">Log one serving (${r.caloriesPerServing.toLocaleString()} kcal)</button>
+        <button class="block" id="rc-log" style="margin-top:.7rem;">Log one serving (${r.caloriesPerServing.toLocaleString()} cal)</button>
       </div>`;
     const recompute = () => {
       const s = Math.max(1, parseInt($("rc-servings").value, 10) || 1);
       const total = parseInt($("rc-total").value, 10) || 0;
       r.servings = s; r.totalCalories = total; r.caloriesPerServing = Math.round(total / s);
       $("rc-perserv").textContent = r.caloriesPerServing.toLocaleString();
-      $("rc-log").textContent = `Log one serving (${r.caloriesPerServing.toLocaleString()} kcal)`;
+      $("rc-log").textContent = `Log one serving (${r.caloriesPerServing.toLocaleString()} cal)`;
     };
     $("rc-servings").addEventListener("input", recompute);
     $("rc-total").addEventListener("input", recompute);
@@ -1707,7 +1835,7 @@
       addFood(isoToday(), { name: r.name + " (1 serving)", kcal: r.caloriesPerServing, grams: null });
       renderNutrition();
       const modal = $("recipe-modal"); if (modal) modal.remove();
-      toast("Logged — " + r.caloriesPerServing.toLocaleString() + " kcal.");
+      toast("Logged — " + r.caloriesPerServing.toLocaleString() + " cal.");
     };
   }
   /* recipe modal is opened from the quick-add row (#qa-recipe) */
@@ -1865,7 +1993,7 @@
       <div class="rc-result">
         <h4>${escapeHtml(label)}</h4>
         <div class="rc-big"><div class="n" id="scan-kcal">${Math.round(info.kcal100 * grams / 100).toLocaleString()}</div><div class="l">Calories for this amount</div></div>
-        <div class="caption" style="text-align:center;">${info.kcal100} kcal / 100 g</div>
+        <div class="caption" style="text-align:center;">${info.kcal100} cal / 100 g</div>
         <label class="field" for="scan-grams">Amount (grams)</label>
         <input type="number" id="scan-grams" min="1" step="10" value="${Math.round(grams)}" />
         <button class="block" id="scan-log" style="margin-top:.7rem;">Add to today's log</button>
@@ -1879,10 +2007,10 @@
       const g = parseInt($("scan-grams").value, 10) || 0;
       if (g <= 0) { toast("Enter an amount."); return; }
       const kcal = Math.round(info.kcal100 * g / 100);
-      addFood(isoToday(), { name: info.name, kcal, grams: g });
+      addFood(isoToday(), { name: info.name, kcal, grams: g, per100: info.kcal100 });
       renderNutrition();
       const m = $("scan-modal"); if (m) m.remove();
-      toast("Added — " + kcal.toLocaleString() + " kcal.");
+      toast("Added — " + kcal.toLocaleString() + " cal.");
     };
   }
   /* scan modal is opened from the quick-add row (#qa-scan) */
