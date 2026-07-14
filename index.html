@@ -169,6 +169,30 @@
     .reasons li::before { content: "•"; color: var(--accent); }
     .pause-note { color: var(--muted); font-size: .8rem; line-height: 1.55; text-align: center; margin-top: 1.2rem; }
 
+    /* ---- History calendar ---- */
+    .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: .7rem; }
+    .cal-title { font-weight: 600; }
+    .cal-nav { background: var(--surface-2); border: 1px solid var(--border); color: var(--ink-soft);
+      width: 34px; height: 34px; border-radius: 8px; cursor: pointer; font-size: 1.1rem; line-height: 1; }
+    .cal-nav:hover { border-color: var(--accent); color: var(--accent); }
+    .cal-week, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+    .cal-wd { text-align: center; font-size: .62rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); padding: 2px 0 4px; }
+    .cal-day { aspect-ratio: 1; border: 1px solid var(--border); border-radius: 10px; display: flex;
+      flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: .8rem;
+      color: var(--ink-2); background: var(--surface); cursor: pointer; }
+    .cal-day.empty { border: none; background: transparent; cursor: default; }
+    .cal-day.today { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .cal-day.future { opacity: .35; cursor: default; }
+    .cal-day:not(.empty):not(.future):hover { border-color: var(--accent); }
+    .cal-dots { display: flex; gap: 3px; height: 6px; }
+    .cal-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .cal-dot.af { background: var(--accent); }
+    .cal-dot.mv { background: #8ecae6; }
+    .cal-dot.cal { background: var(--amber); }
+    .cal-legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: .9rem; font-size: .72rem; color: var(--muted); }
+    .cal-legend span { display: flex; align-items: center; gap: .35rem; }
+    .cal-legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
     /* Streak tiles */
     .streaks { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
     .streak-number { font-size: 2.4rem; font-weight: 700; color: var(--accent); line-height: 1; }
@@ -347,8 +371,8 @@
     }
     nav.tabs button {
       background: transparent; color: var(--muted); border-radius: 12px;
-      padding: .5rem .9rem; font-size: .85rem; display: flex; flex-direction: column;
-      align-items: center; gap: .15rem; min-width: 88px;
+      padding: .5rem .55rem; font-size: .78rem; display: flex; flex-direction: column;
+      align-items: center; gap: .15rem; min-width: 68px;
     }
     nav.tabs button .ico { font-size: 1.25rem; line-height: 1; }
     nav.tabs button.active { color: var(--accent); background: var(--chip); }
@@ -520,6 +544,13 @@
       </div>
     </section>
 
+    <!-- ============================ HISTORY ============================ -->
+    <section id="view-history" class="view">
+      <h2>History</h2>
+      <div class="card" id="history-cal"></div>
+      <div class="caption" style="text-align:center;">Tap any day to update what you ate, whether you moved, and if it was alcohol-free.</div>
+    </section>
+
     <div class="footer-note" id="install-hint" style="display:none;">
       Tip: use your browser's <strong>Share → Add to Home Screen</strong> to install Steady as an app.
     </div>
@@ -529,6 +560,7 @@
   <nav class="tabs">
     <button data-view="dashboard" class="active"><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></svg></span>Home</button>
     <button data-view="today"><span class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="3"/><path d="M9 12l2 2 4-4"/></svg></span>Today</button>
+    <button data-view="history"><span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/></svg></span>History</button>
     <button data-view="journal"><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>Reflect</button>
   </nav>
 
@@ -1527,12 +1559,83 @@
     if (name === "dashboard") renderDashboard();
     if (name === "today") renderToday();
     if (name === "journal") renderJournal();
+    if (name === "history") renderHistory();
     window.scrollTo(0, 0);
   }
   document.querySelectorAll("nav.tabs button").forEach(b =>
     b.addEventListener("click", () => showView(b.dataset.view)));
 
   function renderAll() { renderDashboard(); renderToday(); renderJournal(); }
+
+  // ==================================================================
+  // HISTORY CALENDAR — see and backfill past days.
+  // ==================================================================
+  const CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  let calState = { y: new Date().getFullYear(), m: new Date().getMonth() };
+  function isoOf(y, m, d) { return `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`; }
+  function renderHistory() {
+    const box = $("history-cal"); if (!box) return;
+    const { y, m } = calState, all = loadAll(), move = movementDates(), todayIso = isoToday();
+    const first = new Date(y, m, 1).getDay(), days = new Date(y, m + 1, 0).getDate();
+    let cells = "";
+    for (let i = 0; i < first; i++) cells += `<div class="cal-day empty"></div>`;
+    for (let d = 1; d <= days; d++) {
+      const iso = isoOf(y, m, d), rec = all[iso];
+      const af = rec && rec.alcohol_free, mv = move.has(iso), cals = (rec && rec.calories) || 0;
+      const isToday = iso === todayIso, isFuture = iso > todayIso;
+      const dots = `<div class="cal-dots">${af ? '<span class="cal-dot af"></span>' : ""}${mv ? '<span class="cal-dot mv"></span>' : ""}${cals > 0 ? '<span class="cal-dot cal"></span>' : ""}</div>`;
+      cells += `<div class="cal-day${isToday ? " today" : ""}${isFuture ? " future" : ""}"${isFuture ? "" : ` data-iso="${iso}"`}>${d}${dots}</div>`;
+    }
+    box.innerHTML = `
+      <div class="cal-head">
+        <button class="cal-nav" id="cal-prev" aria-label="Previous month">‹</button>
+        <div class="cal-title">${CAL_MONTHS[m]} ${y}</div>
+        <button class="cal-nav" id="cal-next" aria-label="Next month">›</button>
+      </div>
+      <div class="cal-week">${["S","M","T","W","T","F","S"].map(w => `<div class="cal-wd">${w}</div>`).join("")}</div>
+      <div class="cal-grid">${cells}</div>
+      <div class="cal-legend">
+        <span><i style="background:var(--accent)"></i>Alcohol-free</span>
+        <span><i style="background:#8ecae6"></i>Moved</span>
+        <span><i style="background:var(--amber)"></i>Calories</span>
+      </div>`;
+    $("cal-prev").onclick = () => { if (--calState.m < 0) { calState.m = 11; calState.y--; } renderHistory(); };
+    $("cal-next").onclick = () => { if (++calState.m > 11) { calState.m = 0; calState.y++; } renderHistory(); };
+    box.querySelectorAll("[data-iso]").forEach(el => el.onclick = () => openDayEditor(el.dataset.iso));
+  }
+  function openDayEditor(iso) {
+    const rec = getDay(iso);
+    const cwMoved = (cwSessionsByDate()[iso] || []).length > 0;
+    const dateLabel = new Date(iso + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+    const el = document.createElement("div");
+    el.className = "modal-backdrop"; el.id = "day-modal";
+    el.innerHTML = `
+      <div class="modal-sheet" onclick="event.stopPropagation()">
+        <div class="modal-head"><h3>${dateLabel}</h3><button class="modal-x" id="day-x" aria-label="Close">×</button></div>
+        <label class="checkline"><input type="checkbox" id="day-af" ${rec.alcohol_free ? "checked" : ""} /> Alcohol-free</label>
+        <label class="checkline"><input type="checkbox" id="day-mv" ${(rec.workout || cwMoved) ? "checked" : ""} ${cwMoved ? "disabled" : ""} /> Moved my body${cwMoved ? " (from C-Workout)" : ""}</label>
+        <label class="field" for="day-cal">Calories</label>
+        <input type="number" id="day-cal" min="0" step="10" value="${rec.calories || 0}" />
+        <label class="field" for="day-med">Minutes of stillness</label>
+        <input type="number" id="day-med" min="0" step="5" value="${rec.meditation || 0}" />
+        <button class="block" id="day-save" style="margin-top:.9rem;">Save this day</button>
+      </div>`;
+    el.addEventListener("click", () => close());
+    document.body.appendChild(el); document.body.style.overflow = "hidden";
+    function close() { el.remove(); document.body.style.overflow = ""; }
+    $("day-x").onclick = close;
+    $("day-save").onclick = () => {
+      saveDay(iso, {
+        alcohol_free: $("day-af").checked,
+        workout: $("day-mv").checked,
+        calories: parseInt($("day-cal").value, 10) || 0,
+        meditation: parseInt($("day-med").value, 10) || 0
+      });
+      close(); renderHistory(); renderDashboard();
+      if (iso === isoToday()) renderToday();
+      toast("Day updated.");
+    };
+  }
 
   // ==================================================================
   // RECIPE IMPORTER — calories per serving via Groq
